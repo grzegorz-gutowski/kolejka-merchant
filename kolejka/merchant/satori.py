@@ -280,3 +280,15 @@ class SatoriDumper:
         contest_yaml = 'Contest_' + str(contest.id) + '.yaml'
         ctxyaml_dump(result, output_dir/contest_yaml , work_dir=output_dir)
         return result
+
+
+
+
+
+if __name__ == '__main__':
+    username='a'
+    password='b'
+    contest_name='uzi'
+    output_dir=contest_name
+    satori = SatoriDumper(username, password, output_dir=output_dir)
+    satori(name=contest_name)
