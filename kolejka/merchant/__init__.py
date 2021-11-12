@@ -1,7 +1,7 @@
 # vim:ts=4:sts=4:sw=4:expandtab
 
 
-def main(judge_path=None):
+def main():
     import argparse
     import logging
     import setproctitle

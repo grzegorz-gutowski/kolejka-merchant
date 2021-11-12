@@ -15,7 +15,7 @@ import yaml
 from kolejka.judge.ctxyaml import ctxyaml_dump
 
 class File:
-    def __init__(self, name, filename, value, output_dir=None):
+    def __init__(self, name, filename, value, output_dir):
         self.name = name
         self.filename = filename
         self.value = value
@@ -35,7 +35,7 @@ class File:
         return output.relative_to(self.output_dir)
 
 class Blob:
-    def __init__(self, model, id, group, name, filename, hash, hostname='satori.tcs.uj.edu.pl', blob_port=2887, ssl=True, token='', output_dir=None):
+    def __init__(self, model, id, group, name, filename, hash, hostname, blob_port, ssl, token, output_dir):
         self.model = model
         self.id = id
         self.group = group
@@ -75,11 +75,11 @@ class Blob:
         return output.relative_to(self.output_dir)
 
 class OAMap:
-    def __init__(self, model, id, group, map, hostname='satori.tcs.uj.edu.pl', blob_port=2887, ssl=True, token='', output_dir=None):
+    def __init__(self, model, id, group, oamap, hostname, blob_port, ssl, token, output_dir):
         self.model = model
         self.id = id
         self.group = group
-        self.map = map
+        self.oamap = oamap
         self.hostname = hostname
         self.blob_port = blob_port
         self.ssl = ssl
@@ -88,7 +88,7 @@ class OAMap:
 
     def dump(self):
         result = dict()
-        for key, value in self.map.items():
+        for key, value in self.oamap.items():
             if value.is_blob:
                 blob = Blob(self.model, self.id, self.group, value.name, value.filename, value.value, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, token=self.token, output_dir=self.output_dir)
                 result[key] = blob.dump()
@@ -100,7 +100,7 @@ class SatoriDumper:
 
     BOOTSTRAP_THRIFT = 'service Server { string Server_getIDL(1:string token) }'
 
-    def __init__(self, username, password, hostname='satori.tcs.uj.edu.pl', thrift_port=2889, blob_port=2887, ssl=True, output_dir=None):
+    def __init__(self, username, password, hostname, thrift_port, blob_port, ssl, output_dir=None):
         self.username = str(username)
         self.password = str(password)
         self.hostname = str(hostname)
@@ -119,6 +119,7 @@ class SatoriDumper:
             trans_factory=thriftpy2.transport.TFramedTransportFactory(),
             proto_factory=thriftpy2.protocol.TBinaryProtocolFactory(),
             ssl_context= self.ssl and ssl.create_default_context() or None,
+            timeout=None,
         )
 
     def make_blob(self, model, id, group, name, filename, hash):
@@ -171,8 +172,8 @@ class SatoriDumper:
         tests = self.TestSuite.TestSuite_get_tests(self.token, test_suite_id)
         result = list()
         for test in tests:
-            map = self.Test.Test_data_get_map(self.token, test.id)
-            data = OAMap('Test', test.id, 'data', map, output_dir=self.output_dir).dump()
+            tmap = self.Test.Test_data_get_map(self.token, test.id)
+            data = OAMap('Test', test.id, 'data', tmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
             if 'kolejka' in data:
                 data['kolejka'] = yaml.safe_load(io.StringIO(data['kolejka']))
             result.append(self.TestTuple(id=test.id, name=test.name, data=data))
@@ -199,8 +200,8 @@ class SatoriDumper:
             for test_result in self.TestResult.TestResult_filter(self.token, search):
                 if test_result.submit not in submit_ids:
                     continue
-                map = self.TestResult.Entity_oa_get_map(self.token, test_result.id)
-                data = OAMap('Entity', test_result.id, 'oa', map, output_dir=self.output_dir).dump()
+                emap = self.TestResult.Entity_oa_get_map(self.token, test_result.id)
+                data = OAMap('Entity', test_result.id, 'oa', emap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
                 result.append(self.ResultTuple(id=test_result.id, submit=test_result.submit, test=test_result.test, data=data))
         return result
 
@@ -210,13 +211,13 @@ class SatoriDumper:
         rankings = self.Ranking.Ranking_filter(self.token, search)
         result = list()
         for ranking in rankings:
-            map = self.Ranking.Ranking_params_get_map(self.token, ranking.id)
-            params = OAMap('Ranking', ranking.id, 'params', map, output_dir=self.output_dir).dump()
+            rmap = self.Ranking.Ranking_params_get_map(self.token, ranking.id)
+            params = OAMap('Ranking', ranking.id, 'params', rmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
             problem_params = dict()
-            for problem_id, map, in self.Ranking.Ranking_get_problem_params(self.token, ranking.id).items():
-                problem_params[problem_id] = dict(sorted([ (value.name, value.value) for value in map.values if not value.is_blob ]))
-            map = self.Ranking.Ranking_presentation_get_map(self.token, ranking.id)
-            presentation = OAMap('Ranking', ranking.id, 'presentation', map, output_dir=self.output_dir).dump()
+            for problem_id, pmap, in self.Ranking.Ranking_get_problem_params(self.token, ranking.id).items():
+                problem_params[problem_id] = dict(sorted([ (value.name, value.value) for value in pmap.values() if not value.is_blob ]))
+            prmap = self.Ranking.Ranking_presentation_get_map(self.token, ranking.id)
+            presentation = OAMap('Ranking', ranking.id, 'presentation', prmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
             value = self.Ranking.Ranking_full_ranking(self.token, ranking.id)
             value = File('values/Ranking_' + str(ranking.id), 'value.rest', value, output_dir=self.output_dir).dump()
             result.append(self.RankingTuple(id=ranking.id, name=ranking.name, aggregator=ranking.aggregator, params=params, problem_params=problem_params, presentation=presentation, value=value))
@@ -280,15 +281,3 @@ class SatoriDumper:
         contest_yaml = 'Contest_' + str(contest.id) + '.yaml'
         ctxyaml_dump(result, output_dir/contest_yaml , work_dir=output_dir)
         return result
-
-
-
-
-
-if __name__ == '__main__':
-    username='a'
-    password='b'
-    contest_name='uzi'
-    output_dir=contest_name
-    satori = SatoriDumper(username, password, output_dir=output_dir)
-    satori(name=contest_name)
