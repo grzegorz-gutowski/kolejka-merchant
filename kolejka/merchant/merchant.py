@@ -2,8 +2,8 @@
 
 from kolejka.merchant.satori import SatoriDumper
 
-def merchant(username, password, hostname, thrift_port, blob_port, contest_name, output_dir):
-    satori = SatoriDumper(username, password, hostname=hostname, thrift_port=thrift_port, blob_port=blob_port, ssl=True, output_dir=output_dir)
+def merchant(username, password, hostname, thrift_port, blob_port, ssl, contest_name, output_dir):
+    satori = SatoriDumper(username, password, hostname=hostname, thrift_port=thrift_port, blob_port=blob_port, ssl=ssl, output_dir=output_dir)
     satori(name=contest_name)
 
 def config_parser(parser):
@@ -14,7 +14,8 @@ def config_parser(parser):
     parser.add_argument('--hostname', type=str, default='satori.tcs.uj.edu.pl', help='Server Hostname')
     parser.add_argument('--thrift-port', type=int, default=2889, help='Server Thrift Port')
     parser.add_argument('--blob-port', type=int, default=2887, help='Server Blob Port')
+    parser.add_argument('--ssl', type=bool, default=True, help='Server uses SSL')
 
     def execute(args):
-        merchant(args.username, args.password, args.hostname, args.thrift_port, args.blob_port, args.contest, args.output)
+        merchant(args.username, args.password, args.hostname, args.thrift_port, args.blob_port, args.ssl, args.contest, args.output)
     parser.set_defaults(execute=execute)

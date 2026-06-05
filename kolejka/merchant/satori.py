@@ -35,7 +35,7 @@ class File:
         return output.relative_to(self.output_dir)
 
 class Blob:
-    def __init__(self, model, id, group, name, filename, hash, hostname, blob_port, ssl, token, output_dir):
+    def __init__(self, model, id, group, name, filename, hash, hostname, blob_port, ssl, token_provider, output_dir):
         self.model = model
         self.id = id
         self.group = group
@@ -45,8 +45,12 @@ class Blob:
         self.hostname = hostname
         self.blob_port = blob_port
         self.ssl = ssl
-        self.token = token
+        self.token_provider = token_provider
         self.output_dir = pathlib.Path(output_dir or '.')
+
+    @property
+    def token(self):
+        return self.token_provider.token
 
     @property
     def url(self):
@@ -75,7 +79,7 @@ class Blob:
         return output.relative_to(self.output_dir)
 
 class OAMap:
-    def __init__(self, model, id, group, oamap, hostname, blob_port, ssl, token, output_dir):
+    def __init__(self, model, id, group, oamap, hostname, blob_port, ssl, token_provider, output_dir):
         self.model = model
         self.id = id
         self.group = group
@@ -83,14 +87,18 @@ class OAMap:
         self.hostname = hostname
         self.blob_port = blob_port
         self.ssl = ssl
-        self.token = token
+        self.token_provider = token_provider
         self.output_dir = output_dir
+
+    @property
+    def token(self):
+        return self.token_provider.token
 
     def dump(self):
         result = dict()
         for key, value in self.oamap.items():
             if value.is_blob:
-                blob = Blob(self.model, self.id, self.group, value.name, value.filename, value.value, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, token=self.token, output_dir=self.output_dir)
+                blob = Blob(self.model, self.id, self.group, value.name, value.filename, value.value, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, token_provider=self, output_dir=self.output_dir)
                 result[key] = blob.dump()
             else:
                 result[key] = value.value
@@ -109,7 +117,8 @@ class SatoriDumper:
         self.ssl = bool(ssl)
         self.satori_thrift = None
         self.clients = dict()
-        self.token = ''
+        self.token_data = ''
+        self.token_timestamp = None
         self.output_dir = output_dir
 
     def make_client(self, service):
@@ -123,12 +132,13 @@ class SatoriDumper:
         )
 
     def make_blob(self, model, id, group, name, filename, hash):
-        return Blob(model, id, group, name, filename, hash, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, token=self.token, output_dir=self.output_dir)
+        return Blob(model, id, group, name, filename, hash, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, token_provider=self, output_dir=self.output_dir)
 
     def bootstrap(self):
-        bootstrap_thrift = thriftpy2.load_fp(io.StringIO(self.BOOTSTRAP_THRIFT), 'satori_bootstrap_thrift')
-        bootstrap_client = self.make_client(bootstrap_thrift.Server)
-        self.satori_thrift = thriftpy2.load_fp(io.StringIO(bootstrap_client.Server_getIDL(self.token)), 'satori_thrift')
+        if self.satori_thrift is None:
+            bootstrap_thrift = thriftpy2.load_fp(io.StringIO(self.BOOTSTRAP_THRIFT), 'satori_bootstrap_thrift')
+            bootstrap_client = self.make_client(bootstrap_thrift.Server)
+            self.satori_thrift = thriftpy2.load_fp(io.StringIO(bootstrap_client.Server_getIDL('')), 'satori_thrift')
 
     def __getattr__(self, attr):
         if self.satori_thrift is None:
@@ -138,10 +148,16 @@ class SatoriDumper:
                 self.clients[attr] = self.make_client(self.satori_thrift.__dict__[attr])
             return self.clients[attr]
 
-    def authenticate(self):
-        self.token = self.User.User_authenticate(self.token, self.username, self.password)
+    @property
+    def token(self):
+        if self.token_timestamp is None or datetime.datetime.now() - self.token_timestamp > datetime.timedelta(hours=1):
+            self.bootstrap()
+            self.token_data = self.User.User_authenticate(self.token_data, self.username, self.password)
+            self.token_timestamp = datetime.datetime.now()
+        return self.token_data
 
     def get_contest(self, id=None, name=None):
+        self.bootstrap()
         search = self.satori_thrift.ContestStruct(id=id, name=name)
         contest = self.Contest.Contest_filter(self.token, search)
         if len(contest) == 1:
@@ -150,6 +166,7 @@ class SatoriDumper:
 
     ContestantTuple = collections.namedtuple('Contestant', ['id', 'name'])
     def get_contestants(self, contest_id):
+        self.bootstrap()
         search = self.satori_thrift.ContestantStruct(contest=contest_id)
         contestants = self.Contestant.Contestant_filter(self.token, search)
         result = list()
@@ -159,6 +176,7 @@ class SatoriDumper:
 
     ProblemTuple = collections.namedtuple('Problem', ['id', 'code', 'title', 'statement', 'default_test_suite'])
     def get_problems(self, contest_id):
+        self.bootstrap()
         search = self.satori_thrift.ProblemMappingStruct(contest=contest_id)
         problems = self.ProblemMapping.ProblemMapping_filter(self.token, search)
         result = list()
@@ -173,7 +191,7 @@ class SatoriDumper:
         result = list()
         for test in tests:
             tmap = self.Test.Test_data_get_map(self.token, test.id)
-            data = OAMap('Test', test.id, 'data', tmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
+            data = OAMap('Test', test.id, 'data', tmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token_provider=self).dump()
             if 'kolejka' in data:
                 data['kolejka'] = yaml.safe_load(io.StringIO(data['kolejka']))
             result.append(self.TestTuple(id=test.id, name=test.name, data=data))
@@ -181,6 +199,7 @@ class SatoriDumper:
 
     SolutionTuple = collections.namedtuple('Solution', ['id', 'problem', 'contestant', 'time', 'content'])
     def get_solutions(self, problem_id):
+        self.token
         search = self.satori_thrift.SubmitStruct(problem = problem_id)
         submits = self.Submit.Submit_filter(self.token, search)
         result = list()
@@ -194,6 +213,7 @@ class SatoriDumper:
 
     ResultTuple = collections.namedtuple('Result', ['id', 'submit', 'test', 'data'])
     def get_results(self, test_ids, submit_ids):
+        self.bootstrap()
         result = list()
         for test_id in test_ids:
             search = self.satori_thrift.TestResultStruct(test=test_id, pending=False)
@@ -201,30 +221,30 @@ class SatoriDumper:
                 if test_result.submit not in submit_ids:
                     continue
                 emap = self.TestResult.Entity_oa_get_map(self.token, test_result.id)
-                data = OAMap('Entity', test_result.id, 'oa', emap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
+                data = OAMap('Entity', test_result.id, 'oa', emap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token_provider=self).dump()
                 result.append(self.ResultTuple(id=test_result.id, submit=test_result.submit, test=test_result.test, data=data))
         return result
 
     RankingTuple = collections.namedtuple('Ranking', ['id', 'name', 'aggregator', 'params', 'problem_params', 'presentation', 'value'])
     def get_rankings(self, contest_id):
+        self.bootstrap()
         search = self.satori_thrift.RankingStruct(contest = contest_id)
         rankings = self.Ranking.Ranking_filter(self.token, search)
         result = list()
         for ranking in rankings:
             rmap = self.Ranking.Ranking_params_get_map(self.token, ranking.id)
-            params = OAMap('Ranking', ranking.id, 'params', rmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
+            params = OAMap('Ranking', ranking.id, 'params', rmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token_provider=self).dump()
             problem_params = dict()
             for problem_id, pmap, in self.Ranking.Ranking_get_problem_params(self.token, ranking.id).items():
                 problem_params[problem_id] = dict(sorted([ (value.name, value.value) for value in pmap.values() if not value.is_blob ]))
             prmap = self.Ranking.Ranking_presentation_get_map(self.token, ranking.id)
-            presentation = OAMap('Ranking', ranking.id, 'presentation', prmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token=self.token).dump()
+            presentation = OAMap('Ranking', ranking.id, 'presentation', prmap, hostname=self.hostname, blob_port=self.blob_port, ssl=self.ssl, output_dir=self.output_dir, token_provider=self).dump()
             value = self.Ranking.Ranking_full_ranking(self.token, ranking.id)
             value = File('values/Ranking_' + str(ranking.id), 'value.rest', value, output_dir=self.output_dir).dump()
             result.append(self.RankingTuple(id=ranking.id, name=ranking.name, aggregator=ranking.aggregator, params=params, problem_params=problem_params, presentation=presentation, value=value))
         return result
 
     def __call__(self, id=None, name=None):
-        self.authenticate()
         contest = self.get_contest(id=id, name=name)
         rankings = dict(sorted([ (ranking.id, ranking) for ranking in self.get_rankings(contest.id) ]))
         contestants = dict(sorted([ (contestant.id, contestant) for contestant in self.get_contestants(contest.id) ]))

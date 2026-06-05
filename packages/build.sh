@@ -24,4 +24,8 @@ find Kolejka*/deb_dist -type f -name "*_source.changes" -exec cp -a {} dist ";"
 find Kolejka*/deb_dist -type f -name "*_source.buildinfo" -exec cp -a {} dist ";"
 find dist -type f -name "*_source.changes" -exec debsign --no-conf "-mkolejka.matinf.uj.edu.pl <kolejka@matinf.uj.edu.pl>" --re-sign -S {} ";"
 
+kolejka_merchant_wheel="$(find dist -name "KolejkaMerchant-*.whl" |sort |tail -n 1)"
+
+./wheel_executable.py --wheel "${kolejka_merchant_wheel}" --main kolejka.merchant.main  dist/kolejka-merchant
+
 popd >/dev/null 2>&1
